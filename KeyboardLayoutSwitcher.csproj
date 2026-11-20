@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>KeyboardLayoutSwitcher</RootNamespace>
+    <AssemblyName>KeyboardLayoutSwitcher</AssemblyName>
+    <Version>1.0.0</Version>
+    <Description>Tray utility that switches the keyboard layout based on the active window's process.</Description>
+  </PropertyGroup>
+
+</Project>
