@@ -2,13 +2,15 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- net8.0-windows и новее работают на Windows 10 и выше; .NET 10 — LTS-линейка,
+         на которой пользователь уже запускал проект (net10.0-windows собрался и стартовал). -->
+    <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <RootNamespace>KeyboardLayoutSwitcher</RootNamespace>
     <AssemblyName>KeyboardLayoutSwitcher</AssemblyName>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Description>Tray utility that switches the keyboard layout based on the active window's process.</Description>
   </PropertyGroup>
 

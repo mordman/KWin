@@ -4,6 +4,8 @@ using System.Text;
 namespace KeyboardLayoutSwitcher;
 
 // Низкоуровневая работа с окнами, раскладками и процессами.
+// Все объявления проверены по документации Win32:
+// user32.dll — окна, хуки, раскладки; kernel32.dll — процессы и локали.
 internal static class NativeMethods
 {
     // ---------- Делегаты ----------
@@ -15,14 +17,37 @@ internal static class NativeMethods
     public const int OBJID_WINDOW = 0;
     public const int CHILDID_SELF = 0;
 
-    public const int WM_INPUTLANGCHANGEREQUEST = 0x0050;
-    public const int INPUTLANGCHANGE_FORWARD = 0x0002;
-    public const int INPUTLANGCHANGE_BACKWARD = 0x0004;
+    public const uint WM_INPUTLANGCHANGEREQUEST = 0x0050;
 
-    public const uint GWL_EXSTYLE = unchecked((uint)-20);
-    public const int WS_EX_NOACTIVATE = 0x08000000;
+    // GetLocaleInfo: LOCALE_SISO639LANGNAME — двухбуквенный код ISO 639-1 ("ru", "en")
+    public const uint LOCALE_SISO639LANGNAME = 0x0059;
+    // GetLocaleInfo: LOCALE_SLANGUAGE — полное имя языка ("Russian (Russia)")
+    public const uint LOCALE_SLANGUAGE = 0x0002;
 
-    // ---------- Импорты ----------
+    public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+
+    // ---------- Структуры ----------
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT
+    {
+        public int Left, Top, Right, Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct GUITHREADINFO
+    {
+        public int cbSize;
+        public uint flags;
+        public IntPtr hwndActive;
+        public IntPtr hwndFocus;     // окно, владеющее фокусом ввода
+        public IntPtr hwndCapture;
+        public IntPtr hwndMenuOwner;
+        public IntPtr hwndMoveSize;
+        public IntPtr hwndCaret;
+        public RECT rcCaret;
+    }
+
+    // ---------- user32.dll ----------
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax,
         IntPtr hmodWinEventProc, WinEventDelegate lpfnWinEventProc, uint idProcess,
@@ -38,6 +63,9 @@ internal static class NativeMethods
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
@@ -50,16 +78,18 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern IntPtr GetKeyboardLayout(uint idThread);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern int GetLocaleInfo(uint Locale, uint LCType, StringBuilder lpLCData, int cchData);
-
-    // Отправка сообщения окну
-    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [DllImport("user32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,
-        uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+    public static extern bool GetGUIThreadInfo(uint idThread, ref GUITHREADINFO pgui);
 
-    public const uint SMTO_ABORTIFHUNG = 0x0002;
+    // Асинхронная отправка сообщения — штатный способ запросить смену раскладки
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    // ---------- kernel32.dll ----------
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern int GetLocaleInfo(uint Locale, uint LCType, StringBuilder lpLCData, int cchData);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern IntPtr OpenProcess(uint processAccess, bool bInheritHandle, uint processId);
@@ -72,8 +102,6 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool CloseHandle(IntPtr hObject);
-
-    public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
 
     // ---------- Вспомогательные методы ----------
 
@@ -107,6 +135,14 @@ internal static class NativeMethods
         return sb.ToString();
     }
 
+    // Возвращает имя класса окна (помимает диагностику в журнале).
+    public static string GetWindowClassName(IntPtr hwnd)
+    {
+        var sb = new StringBuilder(256);
+        GetClassName(hwnd, sb, sb.Capacity);
+        return sb.ToString();
+    }
+
     // Текущая раскладка активного окна.
     public static IntPtr GetForegroundLayout()
     {
@@ -116,16 +152,48 @@ internal static class NativeMethods
         return GetKeyboardLayout(threadId);
     }
 
+    // Текущая раскладка потока, владеющего окном.
+    public static IntPtr GetWindowLayout(IntPtr hwnd)
+    {
+        uint threadId = GetWindowThreadProcessId(hwnd, out _);
+        return threadId == 0 ? IntPtr.Zero : GetKeyboardLayout(threadId);
+    }
+
     // Короткий код языка раскладки, например "RU" или "EN".
     public static string LayoutCode(IntPtr hkl)
     {
         if (hkl == IntPtr.Zero) return "??";
-        uint lcid = (uint)hkl.ToInt64() & 0xFFFF;
+        // Младшее слово HKL — идентификатор языка (LANGID)
+        uint langId = (uint)hkl.ToInt64() & 0xFFFF;
         var sb = new StringBuilder(16);
-        int len = GetLocaleInfo(lcid, 0x0002 /*LOCALE_SISO639LANGNAME*/, sb, sb.Capacity); // "ru", "en"
+        int len = GetLocaleInfo(langId, LOCALE_SISO639LANGNAME, sb, sb.Capacity); // "ru", "en", ...
         if (len > 0)
             return sb.ToString().ToUpperInvariant();
-        // запасной вариант: старшие байты
+        // запасной вариант — старшее слово HKL (идентификатор самой раскладки)
         return ((uint)hkl.ToInt64() >> 16).ToString("X4");
+    }
+
+    // Полное имя языка раскладки, например "Russian (Russia)" — для журнала.
+    public static string LanguageName(IntPtr hkl)
+    {
+        if (hkl == IntPtr.Zero) return "";
+        uint langId = (uint)hkl.ToInt64() & 0xFFFF;
+        var sb = new StringBuilder(128);
+        int len = GetLocaleInfo(langId, LOCALE_SLANGUAGE, sb, sb.Capacity);
+        return len > 0 ? sb.ToString() : "";
+    }
+
+    // Окно, которому нужно отправить WM_INPUTLANGCHANGEREQUEST:
+    // окно с фокусом ввода в потоке активного окна, иначе само активное окно.
+    public static IntPtr GetInputTargetWindow(IntPtr hwnd, out uint threadId)
+    {
+        threadId = GetWindowThreadProcessId(hwnd, out _);
+        if (threadId != 0)
+        {
+            var info = new GUITHREADINFO { cbSize = Marshal.SizeOf<GUITHREADINFO>() };
+            if (GetGUIThreadInfo(threadId, ref info) && info.hwndFocus != IntPtr.Zero)
+                return info.hwndFocus;
+        }
+        return hwnd;
     }
 }

@@ -11,11 +11,24 @@
 1. Приложение ставит WinEvent-хук на событие `EVENT_SYSTEM_FOREGROUND` — Windows сообщает каждый раз, когда активным становится новое окно.
 2. По `HWND` определяется процесс-владелец окна (`GetWindowThreadProcessId` → `QueryFullProcessImageName`), берётся имя exe-файла.
 3. Имя exe ищется в списке правил (настройки в `%APPDATA%\KeyboardLayoutSwitcher\settings.json`).
-4. Если правило найдено, окну отправляется сообщение `WM_INPUTLANGCHANGEREQUEST` с нужной раскладкой — то же самое, что делает система при выборе языка в языковой панели. Если правила нет — раскладка не трогается.
+4. Если правило найдено, окну с фокусом ввода отправляется сообщение `WM_INPUTLANGCHANGEREQUEST` с нужной раскладкой — то же самое, что делает система при выборе языка в языковой панели. Если правила нет — раскладка не трогается.
+
+## Журнал переключений
+
+Все события переключения пишутся в `%APPDATA%\KeyboardLayoutSwitcher\switcher.log`:
+
+- старт приложения, версия, версия Windows, список установленных раскладок и правил;
+- каждая активация окна: имя exe, класс и заголовок окна, найденное правило, текущая раскладка;
+- отправка запроса раскладки (окно-получатель, HKL) и отложенная проверка — применилась ли она фактически;
+- все ошибки Win32 (с кодом) и исключения.
+
+Журнал можно открыть прямо из меню трея: **Open log**. При превышении 2 МБ текущий файл переименовывается в `switcher.log.old`. Отключается галочкой **Enable logging of switches** в настройках.
+
+Если переключение не срабатывает, в журнале будет видно, на каком шаге: правило не найдено (неверное имя exe), раскладка не установлена в системе, `PostMessage` отклонён (обычно из-за UIPI — целевое окно запущено от администратора, а переключатель нет), либо приложение проигнорировало запрос.
 
 ## Сборка
 
-Требуется .NET 8 SDK и Windows (проект использует Windows Forms):
+Требуется .NET SDK и Windows 10 или новее (проект использует Windows Forms, целевой фреймворк `net10.0-windows`):
 
 ```
 cd KeyboardLayoutSwitcher
@@ -23,11 +36,13 @@ dotnet build -c Release
 dotnet publish -c Release -r win-x64 --self-contained false -o publish
 ```
 
-Готовый exe: `publish\KeyboardLayoutSwitcher.exe`. Для запуска на целевой машине нужен .NET 8 Desktop Runtime. Чтобы получить автономный exe без зависимости от рантайма:
+Готовый exe: `publish\KeyboardLayoutSwitcher.exe`. Для запуска на целевой машине нужен .NET Desktop Runtime той же мажорной версии. Чтобы получить автономный exe без зависимости от рантайма:
 
 ```
 dotnet publish -c Release -r win-x64 --self-contained true -o publish-selfcontained
 ```
+
+> Окна, запущенные **от администратора**, переключаются только если переключатель тоже запущен от администратора — иначе Windows (UIPI) молча отбрасывает сообщения повышенному процессу.
 
 ## Настройка
 
@@ -36,6 +51,7 @@ dotnet publish -c Release -r win-x64 --self-contained true -o publish-selfcontai
 - Раскладку в правиле можно выбрать из списка установленных в системе (берётся через `GetKeyboardLayoutList`).
 - **Start with Windows** — добавляет запись в `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (права администратора не нужны).
 - **Show balloon tip** — всплывающая подсказка при каждой смене раскладки.
+- **Enable logging of switches** — журнал переключений (см. выше).
 
 Настройки хранятся в `%APPDATA%\KeyboardLayoutSwitcher\settings.json`. По умолчанию создаются два правила: `notepad.exe → RU` и `plsqldev.exe → EN`.
 
@@ -43,6 +59,7 @@ dotnet publish -c Release -r win-x64 --self-contained true -o publish-selfcontai
 
 - **Settings...** — окно настроек.
 - **Pause switching** — приостановить автопереключение (значок становится серым с «||»), галочка снимается повторным кликом.
+- **Open log** — открыть журнал переключений.
 - **Exit** — выход.
 
 ## Известные ограничения
@@ -57,8 +74,9 @@ dotnet publish -c Release -r win-x64 --self-contained true -o publish-selfcontai
 | --- | --- |
 | `Program.cs` | точка входа, одиночный экземпляр |
 | `TrayApplicationContext.cs` | значок трея, меню, WinEvent-хук, применение правил |
-| `NativeMethods.cs` | P/Invoke: user32/kernel32 (хук, окна, раскладки, процессы) |
+| `NativeMethods.cs` | P/Invoke: user32/kernel32 (хук, окна, раскладки, процессы, локали) |
 | `LayoutService.cs` | поиск установленной раскладки и переключение через `WM_INPUTLANGCHANGEREQUEST` |
+| `Logger.cs` | журнал переключений (`%APPDATA%\KeyboardLayoutSwitcher\switcher.log`) |
 | `AppSettings.cs` | модель настроек, загрузка/сохранение JSON |
 | `SettingsForm.cs` | окно настроек, выбор exe активного окна |
 | `IconHelper.cs` | отрисовка значка трея с кодом раскладки |

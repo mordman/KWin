@@ -14,6 +14,7 @@ public class AppSettings
     public List<LayoutRule> Rules { get; set; } = new();
     public bool StartWithWindows { get; set; } = false;
     public bool ShowBalloonOnSwitch { get; set; } = false;   // всплывающее уведомление о смене
+    public bool EnableLogging { get; set; } = true;          // журнал переключений (switcher.log)
 
     private static string SettingsDir =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -56,6 +57,7 @@ public class AppSettings
             },
             StartWithWindows = false,
             ShowBalloonOnSwitch = false,
+            EnableLogging = true,
         };
         s.Save();
         return s;

@@ -12,6 +12,8 @@ internal partial class SettingsForm : Form
     private ComboBox _layoutCombo = null!;
     private CheckBox _autoStartCheck = null!;
     private CheckBox _balloonCheck = null!;
+    private CheckBox _logCheck = null!;
+    private Label _logPathLabel = null!;
     private Button _addButton = null!;
     private Button _removeButton = null!;
     private Button _pickButton = null!;
@@ -33,7 +35,7 @@ internal partial class SettingsForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        Size = new Size(560, 470);
+        Size = new Size(560, 520);
         Font = new Font("Segoe UI", 9F);
 
         var label1 = new Label
@@ -114,14 +116,32 @@ internal partial class SettingsForm : Form
         _balloonCheck.Checked = _settings.ShowBalloonOnSwitch;
         _balloonCheck.CheckedChanged += (s, e) => _dirty = true;
 
-        _saveButton = new Button { Text = "Save", Location = new Point(360, 400), Size = new Size(85, 30) };
+        _logCheck = new CheckBox
+        {
+            Text = "Enable logging of switches",
+            Location = new Point(12, 396),
+            AutoSize = true,
+        };
+        _logCheck.Checked = _settings.EnableLogging;
+        _logCheck.CheckedChanged += (s, e) => _dirty = true;
+
+        _logPathLabel = new Label
+        {
+            Text = "Log: " + Logger.LogPath,
+            Location = new Point(32, 418),
+            AutoSize = true,
+            ForeColor = SystemColors.GrayText,
+        };
+
+        _saveButton = new Button { Text = "Save", Location = new Point(360, 450), Size = new Size(85, 30) };
         _saveButton.Click += (s, e) => SaveAndClose();
 
-        _cancelButton = new Button { Text = "Cancel", Location = new Point(455, 400), Size = new Size(85, 30) };
+        _cancelButton = new Button { Text = "Cancel", Location = new Point(455, 450), Size = new Size(85, 30) };
         _cancelButton.Click += (s, e) => CancelClicked();
 
         Controls.AddRange(new Control[] { label1, _grid, _addButton, _removeButton, _pickButton,
-            layoutLabel, _layoutCombo, _autoStartCheck, _balloonCheck, _saveButton, _cancelButton });
+            layoutLabel, _layoutCombo, _autoStartCheck, _balloonCheck, _logCheck, _logPathLabel,
+            _saveButton, _cancelButton });
         AcceptButton = _saveButton;
         CancelButton = _cancelButton;
     }
@@ -200,6 +220,7 @@ internal partial class SettingsForm : Form
                 _settings.Rules.Add(new LayoutRule { ProcessName = proc, Layout = layout });
         }
         _settings.ShowBalloonOnSwitch = _balloonCheck.Checked;
+        _settings.EnableLogging = _logCheck.Checked;
         _settings.Save();
 
         try { AutoStart.SetEnabled(_autoStartCheck.Checked); }
