@@ -10,7 +10,7 @@
     <Nullable>enable</Nullable>
     <RootNamespace>KeyboardLayoutSwitcher</RootNamespace>
     <AssemblyName>KeyboardLayoutSwitcher</AssemblyName>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
     <Description>Tray utility that switches the keyboard layout based on the active window's process.</Description>
   </PropertyGroup>
 

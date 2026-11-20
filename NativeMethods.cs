@@ -152,13 +152,6 @@ internal static class NativeMethods
         return GetKeyboardLayout(threadId);
     }
 
-    // Текущая раскладка потока, владеющего окном.
-    public static IntPtr GetWindowLayout(IntPtr hwnd)
-    {
-        uint threadId = GetWindowThreadProcessId(hwnd, out _);
-        return threadId == 0 ? IntPtr.Zero : GetKeyboardLayout(threadId);
-    }
-
     // Короткий код языка раскладки, например "RU" или "EN".
     public static string LayoutCode(IntPtr hkl)
     {

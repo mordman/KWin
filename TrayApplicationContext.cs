@@ -10,7 +10,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly AppSettings _settings;
     private readonly LayoutService _layoutService = new();
     private readonly System.Windows.Forms.Timer _iconTimer;   // опрос текущей раскладки для значка
-    private readonly System.Windows.Forms.Timer _verifyTimer; // отложенная проверка фактической смены
+    private readonly System.Windows.Forms.Timer _verifyTimer; // контроль фактического применения раскладки
 
     private IntPtr _winEventHook;
     private NativeMethods.WinEventDelegate? _winEventProc; // держим ссылку, чтобы GC не собрал делегат
@@ -18,11 +18,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private bool _disposed;
     private string _lastIconCode = "";
 
-    // Данные отложенной проверки фактической смены раскладки
+    // Данные отложенного контроля фактического применения раскладки
     private bool _verifyPending;
     private IntPtr _verifyHwnd;
     private uint _verifyThreadId;
     private string _verifyExpected = "";
+    private int _verifyAttempts;
 
     public TrayApplicationContext()
     {
@@ -56,7 +57,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _iconTimer.Tick += (s, e) => UpdateTrayIcon();
         _iconTimer.Start();
 
-        // Отложенная проверка: действительно ли применилась запрошенная раскладка
+        // Контроль: действительно ли применилась запрошенная раскладка
+        // (с повторной отправкой, если Windows подменил её переносом из прошлого окна)
         _verifyTimer = new System.Windows.Forms.Timer { Interval = 400 };
         _verifyTimer.Tick += (s, e) => { _verifyTimer.Stop(); DoVerify(); };
 
@@ -126,6 +128,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
             TryApplyToWindow(hwnd, reason);
     }
 
+    // Правило проверяется только по окну: если процесс окна совпадает с правилом,
+    // нужная раскладка запрашивается при каждой активации — БЕЗ проверки текущей.
+    // Причина: Windows переносит раскладку предыдущего окна в новое уже ПОСЛЕ
+    // события активации, поэтому «текущая раскладка» в момент события ненадёжна:
+    // проверка видела правильную раскладку, которая затем подменялась системой,
+    // и переключение пропускалось до следующего перехода.
     private void TryApplyToWindow(IntPtr hwnd, string reason)
     {
         try
@@ -139,7 +147,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
             string title = Truncate(NativeMethods.GetWindowTitle(hwnd), 60);
             string className = NativeMethods.GetWindowClassName(hwnd);
-            string current = NativeMethods.LayoutCode(NativeMethods.GetWindowLayout(hwnd));
 
             var rule = _settings.Rules.FirstOrDefault(r =>
                 string.Equals(r.ProcessName?.Trim().ToLowerInvariant(), exe, StringComparison.Ordinal));
@@ -150,13 +157,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
                 return;
             }
 
-            Logger.Info($"[{reason}] {exe} (класс «{className}», «{title}»): правило → {rule.Layout}, сейчас {current}");
-
-            if (string.Equals(current, rule.Layout, StringComparison.OrdinalIgnoreCase))
-            {
-                Logger.Info("Раскладка уже соответствует правилу — переключение не требуется");
-                return;
-            }
+            Logger.Info($"[{reason}] {exe} (класс «{className}», «{title}»): правило → {rule.Layout}, применяю");
 
             if (_layoutService.ApplyLayout(hwnd, rule.Layout))
                 ScheduleVerify(hwnd, rule.Layout);
@@ -167,7 +168,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    // ---------- Отложенная проверка фактической смены ----------
+    // ---------- Контроль фактического применения ----------
 
     private void ScheduleVerify(IntPtr hwnd, string expectedCode)
     {
@@ -175,6 +176,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _verifyThreadId = NativeMethods.GetWindowThreadProcessId(hwnd, out _);
         _verifyExpected = expectedCode;
         _verifyPending = true;
+        _verifyAttempts = 1;
         _verifyTimer.Stop();
         _verifyTimer.Start();
     }
@@ -187,14 +189,29 @@ internal sealed class TrayApplicationContext : ApplicationContext
         string now = NativeMethods.LayoutCode(NativeMethods.GetKeyboardLayout(_verifyThreadId));
         if (string.Equals(now, _verifyExpected, StringComparison.OrdinalIgnoreCase))
         {
-            Logger.Info($"Проверка: раскладка окна 0x{_verifyHwnd.ToInt64():X} теперь {now} — переключение применено");
+            Logger.Info($"Проверка: раскладка окна 0x{_verifyHwnd.ToInt64():X} теперь {now} — правило соблюдено");
+            return;
         }
-        else
+
+        // Windows может перенести раскладку предыдущего окна в новое уже после
+        // активации и «затереть» наш запрос — тогда отправляем запрос повторно.
+        if (_verifyAttempts < 3 && NativeMethods.GetForegroundWindow() == _verifyHwnd)
         {
-            Logger.Warn($"Проверка: раскладка окна 0x{_verifyHwnd.ToInt64():X} по-прежнему {now}, а ожидалась " +
-                        $"{_verifyExpected}. Возможно, окно запущено от администратора — тогда и переключатель " +
-                        "нужно запустить от администратора (UIPI блокирует сообщения повышенному окну)");
+            _verifyAttempts++;
+            Logger.Warn($"Проверка: раскладка окна 0x{_verifyHwnd.ToInt64():X} — {now}, а правило требует " +
+                        $"{_verifyExpected} (Windows перенёс раскладку предыдущего окна). Отправляю запрос повторно " +
+                        $"(попытка {_verifyAttempts})");
+            if (_layoutService.ApplyLayout(_verifyHwnd, _verifyExpected))
+            {
+                _verifyPending = true;
+                _verifyTimer.Start();
+            }
+            return;
         }
+
+        Logger.Warn($"Проверка: раскладка окна 0x{_verifyHwnd.ToInt64():X} — {now}, а правило требует " +
+                    $"{_verifyExpected}. Возможно, окно запущено от администратора — тогда и переключатель " +
+                    "нужно запустить от администратора (UIPI блокирует сообщения повышенному окну)");
     }
 
     // ---------- Трей ----------
